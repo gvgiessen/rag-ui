@@ -1,16 +1,23 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "noEmit": true,
-    "esModuleInterop": true,
+    /* ---------- Modern JS ---------- */
+    "target": "ES2020",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
+    /* ---------- TypeScript strictness ---------- */
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowJs": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    /* ---------- React / Next ---------- */
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
@@ -18,17 +25,30 @@
         "name": "next"
       }
     ],
+    /* ---------- Path aliases ---------- */
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
-    }
+      "@/*": [
+        "./src/*",
+        "./lib/*"
+      ]
+    },
+    /* ---------- Custom type roots ---------- */
+    "typeRoots": [
+      "./types", // ⬅️ hier staat jouw pdfjs-dist.d.ts
+      "./node_modules/@types"
+    ]
   },
+  /* ---------- Inclusie / Exclusie ---------- */
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    "types/**/*.d.ts",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }
