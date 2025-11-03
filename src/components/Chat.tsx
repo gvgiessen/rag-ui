@@ -1,12 +1,10 @@
 // app/chat/Chat.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 import { toast } from "sonner";
-import { Loader2, SendHorizontal, FileText, Bot, User } from "lucide-react";
+import { Loader2, SendHorizontal, FileText, Bot, User, FileSearch } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 /* ---------- Types ---------- */
@@ -132,117 +130,36 @@ function coerceAnswer(payload: AskApiResponse): {
     return { ok: true, answer: finalAnswer, sources: hits, model };
 }
 
-/** Inline bronverwijzingen: [Bestandsnaam.pdf|.docx|.pptx|.txt|.md|.csv] */
+/* ---------- Sanitizers ---------- */
 const INLINE_SRC_RE = /\[([^\]\n]+?\.(?:pdf|docx|pptx|txt|md|csv))\]/gi;
+const FILE_REF_PHRASES = [
+    /\bzoals vermeld in\b[\s\S]*?(?:[.!?]|\n|$)/gi,
+    /\bzoals genoemd in\b[\s\S]*?(?:[.!?]|\n|$)/gi,
+    /\bvolgens\b[\s\S]*?(?:[.!?]|\n|$)/gi,
+    /\bin (?:het )?document\b[\s\S]*?(?:[.!?]|\n|$)/gi,
+];
 
-/* ---------- UI: Pill (zonder score/preview) ---------- */
-function SourcePill({ label }: { label: string }) {
-    return (
-        <HoverCard openDelay={120} closeDelay={80}>
-            <HoverCardTrigger asChild>
-        <span className="inline-flex align-baseline">
-          <Badge
-              variant="secondary"
-              className="rounded-full cursor-default select-none inline-flex align-baseline mx-1"
-              title={label}
-          >
-            Bron
-          </Badge>
-        </span>
-            </HoverCardTrigger>
-            <HoverCardContent className="w-80" align="start" side="top">
-                <div className="flex items-start gap-2">
-                    <FileText className="h-4 w-4 shrink-0 mt-0.5" />
-                    <div className="min-w-0">
-                        <div className="text-sm font-medium break-words">{label}</div>
-                    </div>
-                </div>
-            </HoverCardContent>
-        </HoverCard>
-    );
+function sanitizeAnswerText(text: string): string {
+    if (!text) return text;
+    let out = text.replace(INLINE_SRC_RE, "").replace(/\s{2,}/g, " ");
+    for (const re of FILE_REF_PHRASES) {
+        out = out.replace(re, (m) => {
+            const p = m.match(/[.!?]$/)?.[0] ?? "";
+            return p ? p : "";
+        });
+    }
+    out = out.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    return out;
 }
 
-/* ---------- Rendering met “zoals vermeld in” + inline markers ---------- */
-function pickPrimarySource(sources?: Source[]): Source | undefined {
-    if (!sources?.length) return undefined;
-
-    const withScore = sources.filter((s): s is Source & { score: number } => typeof s.score === "number");
-    if (withScore.length) return [...withScore].sort((a, b) => b.score - a.score)[0];
-
-    return sources[0];
+/* ---------- Content renderer (géén inline bronnen meer) ---------- */
+function renderAnswerContent(text: string) {
+    if (!text) return <em>(Geen antwoord)</em>;
+    const clean = sanitizeAnswerText(text);
+    return <span className="inline whitespace-pre-wrap leading-relaxed">{clean}</span>;
 }
 
-function renderSmartContent(text: string, sources?: Source[]) {
-    if (!text) return null;
-
-    // 1) inline markers → pill op die plek
-    const nodes: ReactNode[] = [];
-    let lastIndex = 0;
-    let m: RegExpExecArray | null;
-
-    while ((m = INLINE_SRC_RE.exec(text)) !== null) {
-        const matchStart = m.index;
-        const matchEnd = INLINE_SRC_RE.lastIndex;
-        const fileName = m[1];
-
-        const before = text.slice(lastIndex, matchStart);
-        if (before) nodes.push(<span key={`t-${lastIndex}`}>{before}</span>);
-
-        const src = sources?.find((s) => s.source_name?.toLowerCase() === fileName.toLowerCase());
-        nodes.push(<SourcePill key={`pill-${matchStart}`} label={src?.source_name ?? fileName} />);
-
-        lastIndex = matchEnd;
-    }
-    const tail = text.slice(lastIndex);
-    if (tail) nodes.push(<span key={`tail-${lastIndex}`}>{tail}</span>);
-
-    if (nodes.length > 1) {
-        return <span className="inline whitespace-pre-wrap leading-relaxed">{nodes}</span>;
-    }
-
-    // 2) “zoals vermeld in …” vervangen
-    const primary = pickPrimarySource(sources);
-    if (primary?.source_name) {
-        const PHRASE_RE = /\bzoals vermeld in\b([\s\S]*?)([.!?]|\n|$)/i;
-        const match = text.match(PHRASE_RE);
-
-        if (match && typeof match.index === "number") {
-            const phraseStart = match.index;
-            const RAW_PHRASE_RE = /\bzoals vermeld in\b/i;
-            const sliced = text.slice(phraseStart);
-            const phraseOnly = RAW_PHRASE_RE.exec(sliced);
-
-            if (phraseOnly && typeof phraseOnly.index === "number") {
-                const phraseOnlyStart = phraseStart + phraseOnly.index;
-                const phraseOnlyEnd = phraseOnlyStart + phraseOnly[0].length;
-
-                const consumedLen = match[0].length;
-                const consumedEnd = phraseStart + consumedLen;
-
-                const before = text.slice(0, phraseOnlyEnd);
-                const trailingPunc = match[2];
-                const punctuationToKeep = /[.!?]/.test(trailingPunc) ? trailingPunc : "";
-
-                const replaced = before.trimEnd() + " " + primary.source_name + punctuationToKeep + text.slice(consumedEnd);
-
-                return <span className="inline whitespace-pre-wrap leading-relaxed">{replaced}</span>;
-            }
-        }
-    }
-
-    // 3) geen frase → 1 pill achter de zin
-    if (primary?.source_name) {
-        return (
-            <span className="inline whitespace-pre-wrap leading-relaxed">
-        {text} <SourcePill label={primary.source_name} />
-      </span>
-        );
-    }
-
-    return <span className="inline whitespace-pre-wrap leading-relaxed">{text}</span>;
-}
-
-/* ---------- Welkomstprompts: deterministische SSR + client-only random ---------- */
+/* ---------- Welkomstprompts ---------- */
 const WELCOME_PROMPTS = [
     "Waar denk je vandaag aan?",
     "Wat staat er op de planning?",
@@ -252,7 +169,7 @@ const WELCOME_PROMPTS = [
     "Welke taak wil je nu oppakken?",
     "Wat is je belangrijkste vraag van vandaag?",
 ] as const;
-const DEFAULT_WELCOME = WELCOME_PROMPTS[4]; // "Wat kan ik voor je doen?"
+const DEFAULT_WELCOME = WELCOME_PROMPTS[4];
 
 /* ---------- Component ---------- */
 export default function Chat() {
@@ -267,13 +184,12 @@ export default function Chat() {
     const composingRef = useRef(false);
 
     // dynamisch gemeten 1-regel-hoogte + UX-constants
-    const singleLineHRef = useRef<number>(58); // fallback tot we gemeten hebben
-    const MAX_H = 240; // max textarea hoogte
-    const MIN_TOUCH_H = 44; // minimale totale balkhoogte
-    const WRAPPER_VERTICAL_PADDING = 16; // py-2 => 8 + 8
+    const singleLineHRef = useRef<number>(58); // fallback
+    const MAX_H = 240;
+    const MIN_TOUCH_H = 44;
+    const WRAPPER_VERTICAL_PADDING = 16;
     const [expanded, setExpanded] = useState(false);
 
-    // Welkomsttekst: SSR-vast, na mount willekeurig
     const [welcomeText, setWelcomeText] = useState<string>(DEFAULT_WELCOME);
     useEffect(() => {
         const next = WELCOME_PROMPTS[Math.floor(Math.random() * WELCOME_PROMPTS.length)];
@@ -517,7 +433,9 @@ export default function Chat() {
                         style={{ top: "35%" }}
                     >
                         <div className="mx-auto max-w-xl">
-                            <h2 className="text-balance text-2xl md:text-3xl font-semibold text-foreground">{welcomeText}</h2>
+                            <h2 className="text-balance text-2xl md:text-3xl font-semibold text-foreground">
+                                {welcomeText}
+                            </h2>
                         </div>
                     </motion.div>
                 )}
@@ -536,12 +454,11 @@ export default function Chat() {
                 <div
                     className={[
                         "border shadow-sm flex items-center gap-3 transition-all duration-200 px-4",
-                        "py-2", // altijd padding voor comfortabele touch-hoogte
+                        "py-2",
                         "focus-within:outline-none focus-within:ring-0 focus-within:ring-offset-0",
                         expanded ? "rounded-2xl" : "rounded-full",
                     ].join(" ")}
                     style={{
-                        // minimaal: 1 regel + padding, maar nooit onder MIN_TOUCH_H
                         minHeight: `${Math.max(singleLineHRef.current + WRAPPER_VERTICAL_PADDING, MIN_TOUCH_H)}px`,
                     }}
                 >
@@ -558,7 +475,7 @@ export default function Chat() {
                 placeholder="Schrijf je vraag…"
                 className={[
                     "w-full bg-transparent resize-none",
-                    "overflow-hidden", // wil je scrollen bij MAX_H? vervang door "overflow-y-auto"
+                    "overflow-hidden",
                     "text-[16px] placeholder:text-muted-foreground",
                     "min-h-0 [field-sizing:auto] p-0 m-0",
                     "outline-none border-0 ring-0 appearance-none",
@@ -566,7 +483,7 @@ export default function Chat() {
                 style={{
                     padding: 0,
                     margin: 0,
-                    height: "auto", // autoGrow zet de echte hoogte
+                    height: "auto",
                     maxHeight: `${MAX_H}px`,
                 }}
                 onCompositionStart={() => (composingRef.current = true)}
@@ -601,12 +518,12 @@ export default function Chat() {
     );
 }
 
-/* ---------- Bubble ---------- */
+/* ---------- Bubble (met per-bericht Bronnen) ---------- */
 function MessageBubble({
                            role,
                            content,
                            sources,
-                           model: _model, // niet gebruikt
+                           model, // gereserveerd voor toekomst
                        }: {
     role: "user" | "assistant";
     content: string;
@@ -615,8 +532,24 @@ function MessageBubble({
 }) {
     const isUser = role === "user";
 
+    // Toggle voor inline bronnenblok
+    const [open, setOpen] = React.useState(false);
+
+    // Gede-dupliceerde bronnen (op naam), in ontvangen volgorde
+    const uniqueSources = React.useMemo(() => {
+        if (!sources?.length) return [];
+        const seen = new Set<string>();
+        return sources.filter((s) => {
+            const key = (s.source_name || "").trim().toLowerCase();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }, [sources]);
+
     return (
         <div className="w-full mb-6">
+            {/* Bubbel */}
             <div className={`flex items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
                 {!isUser && (
                     <div className="mt-1 shrink-0 rounded-full border p-2">
@@ -631,7 +564,7 @@ function MessageBubble({
                     ].join(" ")}
                 >
                     <div className="prose prose-sm max-w-none dark:prose-invert [&_p]:inline [&_p]:m-0">
-                        {content?.trim()?.length ? renderSmartContent(content, sources) : <em>(Geen antwoord)</em>}
+                        {renderAnswerContent(content)}
                     </div>
                 </div>
 
@@ -641,8 +574,65 @@ function MessageBubble({
                     </div>
                 )}
             </div>
+
+            {/* Bronnen-knop + inline paneel */}
+            {!isUser && uniqueSources.length > 0 && (
+                <div className="mt-2 ml-12 mr-10">
+                    <button
+                        type="button"
+                        onClick={() => setOpen((v) => !v)}
+                        className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm bg-background hover:bg-accent transition"
+                        aria-expanded={open}
+                        aria-controls={`sources-panel-${uniquePanelId(uniqueSources)}`}
+                    >
+                        <FileSearch className="h-4 w-4" />
+                        {open ? "Verberg bronnen" : "Bronnen"}
+                    </button>
+
+                    <AnimatePresence initial={false}>
+                        {open && (
+                            <motion.div
+                                key="sources-panel"
+                                id={`sources-panel-${uniquePanelId(uniqueSources)}`}
+                                role="region"
+                                aria-label="Bronnenlijst"
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: "auto", opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.18 }}
+                                className="overflow-hidden"
+                            >
+                                <div className="mt-2 rounded-xl border bg-background">
+                                    <div className="max-h-60 overflow-y-auto divide-y">
+                                        {uniqueSources.map((s, idx) => (
+                                            <div key={`${s.source_name}-${idx}`} className="p-3">
+                                                <div className="flex items-start gap-2">
+                                                    <FileText className="h-4 w-4 mt-0.5 shrink-0" />
+                                                    <div className="min-w-0">
+                                                        <div className="font-medium leading-5 break-words">
+                                                            {s.source_name}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </div>
+            )}
         </div>
     );
+}
+
+function uniquePanelId(sources: Source[]) {
+    // simpele hash op basis van sourcenamen (alleen voor aria-controls/id)
+    const key = sources.map((s) => s.source_name).join("|");
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    return h.toString(16);
 }
 
 /* ---------- Typing indicator bubble ---------- */
@@ -656,9 +646,18 @@ function TypingBubble() {
 
                 <div className="max-w-[85%] rounded-2xl border px-4 py-3 bg-card mr-10">
                     <div className="flex items-center gap-1 h-5">
-                        <span className="w-2 h-2 rounded-full bg-muted-foreground/70 animate-bounce" style={{ animationDelay: "0ms" }} />
-                        <span className="w-2 h-2 rounded-full bg-muted-foreground/70 animate-bounce" style={{ animationDelay: "150ms" }} />
-                        <span className="w-2 h-2 rounded-full bg-muted-foreground/70 animate-bounce" style={{ animationDelay: "300ms" }} />
+            <span
+                className="w-2 h-2 rounded-full bg-muted-foreground/70 animate-bounce"
+                style={{ animationDelay: "0ms" }}
+            />
+                        <span
+                            className="w-2 h-2 rounded-full bg-muted-foreground/70 animate-bounce"
+                            style={{ animationDelay: "150ms" }}
+                        />
+                        <span
+                            className="w-2 h-2 rounded-full bg-muted-foreground/70 animate-bounce"
+                            style={{ animationDelay: "300ms" }}
+                        />
                     </div>
                 </div>
             </div>
