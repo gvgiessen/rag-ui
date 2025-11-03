@@ -223,8 +223,7 @@ function renderSmartContent(text: string, sources?: Source[]) {
                 const trailingPunc = match[2];
                 const punctuationToKeep = /[.!?]/.test(trailingPunc) ? trailingPunc : "";
 
-                const replaced =
-                    before.trimEnd() + " " + primary.source_name + punctuationToKeep + text.slice(consumedEnd);
+                const replaced = before.trimEnd() + " " + primary.source_name + punctuationToKeep + text.slice(consumedEnd);
 
                 return <span className="inline whitespace-pre-wrap leading-relaxed">{replaced}</span>;
             }
@@ -243,6 +242,18 @@ function renderSmartContent(text: string, sources?: Source[]) {
     return <span className="inline whitespace-pre-wrap leading-relaxed">{text}</span>;
 }
 
+/* ---------- Welkomstprompts: deterministische SSR + client-only random ---------- */
+const WELCOME_PROMPTS = [
+    "Waar denk je vandaag aan?",
+    "Wat staat er op de planning?",
+    "Waar kan ik je vandaag mee helpen?",
+    "Hoe gaat het?",
+    "Wat kan ik voor je doen?",
+    "Welke taak wil je nu oppakken?",
+    "Wat is je belangrijkste vraag van vandaag?",
+] as const;
+const DEFAULT_WELCOME = WELCOME_PROMPTS[4]; // "Wat kan ik voor je doen?"
+
 /* ---------- Component ---------- */
 export default function Chat() {
     const [messages, setMessages] = useState<Message[]>([]);
@@ -257,28 +268,17 @@ export default function Chat() {
 
     // dynamisch gemeten 1-regel-hoogte + UX-constants
     const singleLineHRef = useRef<number>(58); // fallback tot we gemeten hebben
-    const MAX_H = 240;                          // max textarea hoogte
-    const MIN_TOUCH_H = 44;                     // minimale totale balkhoogte
-    const WRAPPER_VERTICAL_PADDING = 16;        // py-2 => 8 + 8
+    const MAX_H = 240; // max textarea hoogte
+    const MIN_TOUCH_H = 44; // minimale totale balkhoogte
+    const WRAPPER_VERTICAL_PADDING = 16; // py-2 => 8 + 8
     const [expanded, setExpanded] = useState(false);
 
-    // welkomstprompts
-    const welcomePrompts = useMemo(
-        () => [
-            "Waar denk je vandaag aan?",
-            "Wat staat er op de planning?",
-            "Waar kan ik je vandaag mee helpen?",
-            "Hoe gaat het?",
-            "Wat kan ik voor je doen?",
-            "Welke taak wil je nu oppakken?",
-            "Wat is je belangrijkste vraag van vandaag?",
-        ],
-        []
-    );
-    const randomWelcome = useMemo(
-        () => welcomePrompts[Math.floor(Math.random() * welcomePrompts.length)],
-        [welcomePrompts]
-    );
+    // Welkomsttekst: SSR-vast, na mount willekeurig
+    const [welcomeText, setWelcomeText] = useState<string>(DEFAULT_WELCOME);
+    useEffect(() => {
+        const next = WELCOME_PROMPTS[Math.floor(Math.random() * WELCOME_PROMPTS.length)];
+        setWelcomeText(next);
+    }, []);
 
     const hasAsked = messages.length > 0;
 
@@ -421,8 +421,8 @@ export default function Chat() {
 
             if (!res.ok || !payload) {
                 const msg =
-                    isRecord(payload) && "error" in payload && typeof payload.error === "string"
-                        ? (payload.error as string)
+                    isRecord(payload) && "error" in payload && typeof (payload as any).error === "string"
+                        ? ((payload as any).error as string)
                         : `HTTP ${res.status}`;
                 toast.error(msg);
                 setMessages((prev) => {
@@ -517,7 +517,7 @@ export default function Chat() {
                         style={{ top: "35%" }}
                     >
                         <div className="mx-auto max-w-xl">
-                            <h2 className="text-balance text-2xl md:text-3xl font-semibold text-foreground">{randomWelcome}</h2>
+                            <h2 className="text-balance text-2xl md:text-3xl font-semibold text-foreground">{welcomeText}</h2>
                         </div>
                     </motion.div>
                 )}
@@ -566,7 +566,7 @@ export default function Chat() {
                 style={{
                     padding: 0,
                     margin: 0,
-                    height: "auto",           // autoGrow zet de echte hoogte
+                    height: "auto", // autoGrow zet de echte hoogte
                     maxHeight: `${MAX_H}px`,
                 }}
                 onCompositionStart={() => (composingRef.current = true)}
