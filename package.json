@@ -30,7 +30,7 @@
     "next": "16.0.1",
     "openai": "^6.7.0",
     "pdf-parse": "^2.4.5",
-    "pdfjs-dist": "^3.11.174",
+    "pdfjs-dist": "^4.2.67",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-markdown": "^10.1.0",
